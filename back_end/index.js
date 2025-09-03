@@ -1,9 +1,10 @@
+// index.js (Backend - with plain text password storage)
 
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const jwt = require('jsonwebtoken');
-const bcrypt = require('bcryptjs');
+// Removed bcrypt
 const app = express();
 
 app.use(cors());
@@ -21,7 +22,7 @@ mongoose.connect('mongodb://127.0.0.1:27017/taskmanager', {
 const UserSchema = new mongoose.Schema({
   name: String,
   email: { type: String, unique: true },
-  password: String,
+  password: String, // plain
   role: { type: String, enum: ['admin', 'user'], default: 'user' },
 });
 
@@ -33,16 +34,16 @@ const TaskSchema = new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
 });
 
-// NEW: Login Schema
+// Login Schema (optional usage)
 const LoginSchema = new mongoose.Schema({
   email: String,
-  password: String, // hashed
+  password: String, // plain
   createdAt: { type: Date, default: Date.now }
 });
 
 const User = mongoose.model('User', UserSchema);
 const Task = mongoose.model('Task', TaskSchema);
-const Login = mongoose.model('Login', LoginSchema); // NEW
+const Login = mongoose.model('Login', LoginSchema);
 
 // Auth Middleware
 const authMiddleware = (req, res, next) => {
@@ -63,13 +64,17 @@ app.post('/api/signup', async (req, res) => {
   if (!name || !email || !password) return res.status(400).json({ msg: 'All fields required.' });
   if (await User.findOne({ email })) return res.status(400).json({ msg: 'Email exists.' });
 
-  const hashedPassword = await bcrypt.hash(password, 10);
+  const newUser = await new User({
+    name,
+    email,
+    password, // stored as plain text
+    role
+  }).save();
 
-
-  const newUser = await new User({ name, email, password: hashedPassword, role }).save();
-
-
-  await new Login({ email, password: hashedPassword }).save();
+  await new Login({
+    email,
+    password // plain text
+  }).save();
 
   res.json({ msg: 'Signup successful' });
 });
@@ -78,13 +83,25 @@ app.post('/api/signup', async (req, res) => {
 app.post('/api/login', async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) return res.status(400).json({ msg: 'All fields required.' });
+
   const user = await User.findOne({ email });
   if (!user) return res.status(404).json({ msg: 'User not found' });
-  if (!(await bcrypt.compare(password, user.password))) return res.status(400).json({ msg: 'Incorrect password' });
+
+  if (password !== user.password) {
+    return res.status(400).json({ msg: 'Incorrect password' });
+  }
 
   const token = jwt.sign({ id: user._id, role: user.role }, JWT_SECRET, { expiresIn: '1d' });
 
-  res.json({ token, user: { id: user._id, name: user.name, email, role: user.role } });
+  res.json({
+    token,
+    user: {
+      id: user._id,
+      name: user.name,
+      email: user.email,
+      role: user.role
+    }
+  });
 });
 
 // Task Routes
@@ -135,8 +152,7 @@ app.delete('/api/tasks/:id', authMiddleware, async (req, res) => {
   const task = await Task.findById(req.params.id);
   if (!task) return res.status(404).json({ msg: 'Task not found' });
 
-  //  Add debug logs
-  console.log(' Deleting Task:', {
+  console.log('Deleting Task:', {
     userRole: req.user.role,
     taskUserId: task.userId?.toString(),
     currentUserId: req.user.id,
@@ -150,6 +166,5 @@ app.delete('/api/tasks/:id', authMiddleware, async (req, res) => {
   res.json({ msg: 'Task deleted' });
 });
 
-
 const PORT = 5000;
-app.listen(PORT, () => console.log(` Server running at http://localhost:${PORT}`));
+app.listen(PORT, () => console.log(`Server running at http://localhost:${PORT}`));
